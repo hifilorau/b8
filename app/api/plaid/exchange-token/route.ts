@@ -64,15 +64,11 @@ export async function POST(req: NextRequest) {
     const newlyLinked: LinkedAccountSummary[] = [];
 
     for (const a of accounts) {
-      // access_token is still written to the account row as well as the Item. Transitional and
-      // deliberate: the migration that added plaid_items kept this column so its down stays
-      // lossless, and that only holds if accounts linked AFTER the migration also carry it.
-      // Both the column and this write go away together in the follow-up migration.
       const insertRes = await db.query(
-        `INSERT INTO accounts (id, name, type, subtype, mask, persistent_account_id, access_token, plaid_item_id, bank)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        `INSERT INTO accounts (id, name, type, subtype, mask, persistent_account_id, plaid_item_id, bank)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (id) DO NOTHING`,
-        [a.account_id, a.name, a.type, a.subtype ?? null, a.mask ?? null, a.persistent_account_id ?? null, access_token, itemId, bankName]
+        [a.account_id, a.name, a.type, a.subtype ?? null, a.mask ?? null, a.persistent_account_id ?? null, itemId, bankName]
       );
 
       if (insertRes.rowCount === 0) {
@@ -81,10 +77,10 @@ export async function POST(req: NextRequest) {
         // stands. The cursor CASE that used to live here is gone; the cursor belongs to the
         // Item and upsertItem above has already decided whether the token changed.
         await db.query(
-          `UPDATE accounts SET name = $1, mask = $2, persistent_account_id = $3, access_token = $4,
-                  plaid_item_id = $5, bank = COALESCE(bank, $6)
-             WHERE id = $7`,
-          [a.name, a.mask ?? null, a.persistent_account_id ?? null, access_token, itemId, bankName, a.account_id]
+          `UPDATE accounts SET name = $1, mask = $2, persistent_account_id = $3,
+                  plaid_item_id = $4, bank = COALESCE(bank, $5)
+             WHERE id = $6`,
+          [a.name, a.mask ?? null, a.persistent_account_id ?? null, itemId, bankName, a.account_id]
         );
         continue;
       }
@@ -114,10 +110,10 @@ export async function POST(req: NextRequest) {
         // point: moving an account between Items cannot strand it on the wrong cursor, because
         // the cursor it syncs with is whichever one its new Item holds.
         await db.query(
-          `UPDATE accounts SET access_token = $1, mask = $2, persistent_account_id = $3,
-                  plaid_item_id = $4, bank = COALESCE(bank, $5)
-             WHERE id = $6`,
-          [access_token, a.mask ?? null, a.persistent_account_id ?? null, itemId, bankName, existingId]
+          `UPDATE accounts SET mask = $1, persistent_account_id = $2,
+                  plaid_item_id = $3, bank = COALESCE(bank, $4)
+             WHERE id = $5`,
+          [a.mask ?? null, a.persistent_account_id ?? null, itemId, bankName, existingId]
         );
         await db.query('DELETE FROM accounts WHERE id = $1', [a.account_id]);
         continue;

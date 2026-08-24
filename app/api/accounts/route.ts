@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
     const id = `manual_${randomUUID()}`;
     await db.query(
-      `INSERT INTO accounts (id, name, type, subtype, landscape, bank, access_token, valuation_mode, is_liability)
+      `INSERT INTO accounts (id, name, type, subtype, landscape, bank, plaid_item_id, valuation_mode, is_liability)
        VALUES ($1, $2, $3, $4, $5, $6, NULL, $7, $8)`,
       [id, name.trim(), type, subtype ?? null, landscape, bank?.trim() || null, valuationMode, isLiability]
     );

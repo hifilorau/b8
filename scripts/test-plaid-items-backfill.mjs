@@ -7,7 +7,8 @@
 // (a full backfill that dedupes), so the rule is "keep the cursor only when every sibling
 // agrees and none is missing" — and this asserts exactly that, on data shaped to hit each case.
 //
-// Run against a THROWAWAY database: it migrates down to before plaid_items and wipes accounts.
+// Run against a THROWAWAY database: it migrates down to before plaid_items and wipes accounts,
+// then migrates back up to head.
 //   DATABASE_URL=... node scripts/test-plaid-items-backfill.mjs
 
 import pg from 'pg';
@@ -24,8 +25,16 @@ const migrate = (...args) =>
 const db = new pg.Client({ connectionString: process.env.DATABASE_URL });
 await db.connect();
 
-// Roll back to just before plaid_items, then stage the pre-migration shape.
-migrate('down');
+// Roll back until plaid_items is gone, rather than a fixed number of steps: migrations keep
+// being appended after it, and a hardcoded count would silently start testing the wrong state.
+for (let i = 0; i < 20 && (await db.query("SELECT to_regclass('plaid_items') AS t")).rows[0].t; i++) {
+  migrate('down');
+}
+if ((await db.query("SELECT to_regclass('plaid_items') AS t")).rows[0].t) {
+  console.error('could not roll back past the plaid_items migration');
+  process.exit(1);
+}
+
 await db.query('TRUNCATE accounts RESTART IDENTITY CASCADE');
 await db.query(`
   INSERT INTO accounts (id, name, type, access_token, cursor, bank, last_synced_at) VALUES
@@ -38,6 +47,7 @@ await db.query(`
     ('m1','Manual','other',     NULL,   NULL,   NULL,     NULL)
 `);
 
+// Back to head, re-running the backfill over the staged rows.
 migrate('up');
 
 const { rows } = await db.query(`

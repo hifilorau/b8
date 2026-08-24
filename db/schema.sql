@@ -30,8 +30,6 @@ CREATE TABLE IF NOT EXISTS accounts (
   mask                   TEXT,              -- last 4 digits, used to re-match accounts if Plaid reissues account_id
   persistent_account_id  TEXT,              -- Plaid's stable identifier, preferred over account_id for reconciliation
   landscape              TEXT NOT NULL DEFAULT 'operational' CHECK (landscape IN ('operational', 'capital')),
-  access_token    TEXT,              -- LEGACY, dropped in a follow-up migration: the token now lives on plaid_items
-  cursor              TEXT,              -- LEGACY, dropped in a follow-up migration: the cursor now lives on plaid_items
   last_synced_at      TIMESTAMPTZ,
   track_transactions  BOOLEAN NOT NULL DEFAULT TRUE,
   bank                TEXT,

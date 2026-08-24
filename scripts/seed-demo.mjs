@@ -334,11 +334,11 @@ async function main() {
 
   for (const a of accounts) {
     await db.query(
-      `INSERT INTO accounts (id, name, type, subtype, access_token, plaid_item_id, last_synced_at,
+      `INSERT INTO accounts (id, name, type, subtype, plaid_item_id, last_synced_at,
                              landscape, track_transactions, bank, mask, sort_order, valuation_mode,
                              is_liability, property_id)
-       VALUES ($1,$2,$3,$4,$5,$6, NOW() - INTERVAL '4 hours', $7,$8,$9,$10,$11,$12,$13,$14)`,
-      [a.id, a.name, a.type, a.subtype, a.token, itemIdByToken.get(a.token), a.landscape,
+       VALUES ($1,$2,$3,$4,$5, NOW() - INTERVAL '4 hours', $6,$7,$8,$9,$10,$11,$12,$13)`,
+      [a.id, a.name, a.type, a.subtype, itemIdByToken.get(a.token), a.landscape,
        a.track_transactions, a.bank, a.mask, a.sort, a.valuation_mode, a.is_liability, a.property_id]
     );
   }
