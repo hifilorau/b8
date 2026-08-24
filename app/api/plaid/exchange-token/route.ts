@@ -4,6 +4,7 @@ import { plaidClient } from '@/lib/plaid';
 import db from '@/lib/db';
 import type { ApiResponse, LinkedAccountSummary } from '@/shared/types';
 import { createLogger } from '@/lib/logger';
+import { upsertItem } from '@/lib/plaidItems';
 
 const log = createLogger('exchange-token');
 
@@ -27,6 +28,10 @@ export async function POST(req: NextRequest) {
     ]);
     const accounts = accountsRes.data.accounts;
     const institutionId = itemRes.data.item.institution_id;
+    // itemGet was already being called for institution_id; the Item's own id was fetched and
+    // thrown away. It is the stable key for the connection, so it is what the Item row is
+    // matched on from here.
+    const providerItemId = itemRes.data.item.item_id;
 
     let bankName: string | null = null;
     if (institutionId) {
@@ -46,32 +51,40 @@ export async function POST(req: NextRequest) {
     // and correctly detecting "new" needs ON CONFLICT DO NOTHING's rowCount, which a
     // fire-and-forget DO UPDATE can't give — that always affects exactly one row either way,
     // so the old code's `rowCount === 1` check ran on every account, insert or not.
+    // One row for the connection, created (or refreshed) before any account references it.
+    // The cursor reset on a changed token happens in here now, at the grain a cursor actually
+    // belongs to — see lib/plaidItems.ts.
+    const itemId = await upsertItem({
+      itemId: providerItemId,
+      accessToken: access_token,
+      institutionId: institutionId ?? null,
+      bank: bankName,
+    });
+
     const newlyLinked: LinkedAccountSummary[] = [];
 
     for (const a of accounts) {
+      // access_token is still written to the account row as well as the Item. Transitional and
+      // deliberate: the migration that added plaid_items kept this column so its down stays
+      // lossless, and that only holds if accounts linked AFTER the migration also carry it.
+      // Both the column and this write go away together in the follow-up migration.
       const insertRes = await db.query(
-        `INSERT INTO accounts (id, name, type, subtype, mask, persistent_account_id, access_token, bank)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        `INSERT INTO accounts (id, name, type, subtype, mask, persistent_account_id, access_token, plaid_item_id, bank)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT (id) DO NOTHING`,
-        [a.account_id, a.name, a.type, a.subtype ?? null, a.mask ?? null, a.persistent_account_id ?? null, access_token, bankName]
+        [a.account_id, a.name, a.type, a.subtype ?? null, a.mask ?? null, a.persistent_account_id ?? null, access_token, itemId, bankName]
       );
 
       if (insertRes.rowCount === 0) {
         // This exact id was already tracked — a plain reconnect. Refresh its identifiers and
-        // access_token, but it is not new: whatever valuation_mode it already has stands.
-        // cursor is scoped to the Plaid Item that issued it, so it must not survive a token
-        // change: carrying one across a re-auth makes every later sync fail with
-        // INVALID_FIELD "cursor not associated with access_token", and since last_synced_at
-        // only advances on success the connection then goes silently stale while Plaid reports
-        // the Item as healthy. Conditional, so a reconnect returning the SAME token keeps its
-        // cursor rather than forcing a needless full backfill. In an UPDATE the right-hand
-        // side sees the pre-update row, so access_token here is the old value.
+        // point it at the Item, but it is not new: whatever valuation_mode it already has
+        // stands. The cursor CASE that used to live here is gone; the cursor belongs to the
+        // Item and upsertItem above has already decided whether the token changed.
         await db.query(
           `UPDATE accounts SET name = $1, mask = $2, persistent_account_id = $3, access_token = $4,
-                  cursor = CASE WHEN access_token IS DISTINCT FROM $4 THEN NULL ELSE cursor END,
-                  bank = COALESCE(bank, $5)
-             WHERE id = $6`,
-          [a.name, a.mask ?? null, a.persistent_account_id ?? null, access_token, bankName, a.account_id]
+                  plaid_item_id = $5, bank = COALESCE(bank, $6)
+             WHERE id = $7`,
+          [a.name, a.mask ?? null, a.persistent_account_id ?? null, access_token, itemId, bankName, a.account_id]
         );
         continue;
       }
@@ -97,13 +110,14 @@ export async function POST(req: NextRequest) {
 
       if (dup.rows.length > 0) {
         const existingId = dup.rows[0].id;
-        // Unconditional here: this branch only runs when repointing a row at a DIFFERENT
-        // Item, so its cursor is necessarily from the old one.
+        // The `cursor = NULL` this used to carry is no longer needed, and its absence is the
+        // point: moving an account between Items cannot strand it on the wrong cursor, because
+        // the cursor it syncs with is whichever one its new Item holds.
         await db.query(
           `UPDATE accounts SET access_token = $1, mask = $2, persistent_account_id = $3,
-                  cursor = NULL, bank = COALESCE(bank, $4)
-             WHERE id = $5`,
-          [access_token, a.mask ?? null, a.persistent_account_id ?? null, bankName, existingId]
+                  plaid_item_id = $4, bank = COALESCE(bank, $5)
+             WHERE id = $6`,
+          [access_token, a.mask ?? null, a.persistent_account_id ?? null, itemId, bankName, existingId]
         );
         await db.query('DELETE FROM accounts WHERE id = $1', [a.account_id]);
         continue;

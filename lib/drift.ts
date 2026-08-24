@@ -16,7 +16,7 @@ export async function findBalanceDrift(threshold = 1): Promise<DriftFinding[]> {
     // same number.
     db.query<{ id: string; name: string; type: string }>(
       `SELECT id, name, type FROM accounts
-        WHERE valuation_mode = 'ledger' AND track_transactions = TRUE AND access_token IS NOT NULL`
+        WHERE valuation_mode = 'ledger' AND track_transactions = TRUE AND plaid_item_id IS NOT NULL`
     ),
     db.query<{ account_id: string; net: string }>(`
       SELECT t.account_id,

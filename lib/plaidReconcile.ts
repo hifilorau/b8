@@ -32,12 +32,16 @@ export interface ReconcileResult {
   liveBalances: ObservedBalance[];
 }
 
-export async function reconcileAccountIds(accessToken: string): Promise<ReconcileResult> {
+export async function reconcileAccountIds(itemId: number, accessToken: string): Promise<ReconcileResult> {
   const live = await plaidClient.accountsGet({ access_token: accessToken });
 
+  // Scoped by the Item's surrogate id rather than by the token's value. Same set of rows,
+  // but the predicate no longer depends on the credential being comparable — which is what
+  // lets the token become ciphertext without this silently matching zero rows and quietly
+  // giving up on reconciliation forever.
   const { rows: dbAccounts } = await db.query<DbAccountRow>(
-    'SELECT id, name, mask, subtype, persistent_account_id FROM accounts WHERE access_token = $1',
-    [accessToken]
+    'SELECT id, name, mask, subtype, persistent_account_id FROM accounts WHERE plaid_item_id = $1',
+    [itemId]
   );
 
   const { remapped, backfills, unmatchedLive, unmatchedDb } = matchAccounts(live.data.accounts, dbAccounts);

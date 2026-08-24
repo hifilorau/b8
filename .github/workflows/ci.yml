@@ -106,6 +106,9 @@ jobs:
       - run: node scripts/db-snapshot.mjs write /tmp/rolled-back.json
       - run: npm run migrate:up
       - run: node scripts/db-snapshot.mjs compare /tmp/before.json /tmp/rolled-back.json
+      # Last, because it truncates accounts to stage a pre-migration shape. Guards the one
+      # lossy step in the plaid_items backfill: collapsing N sibling cursors into one.
+      - run: node scripts/test-plaid-items-backfill.mjs
 
   gitleaks:
     runs-on: ubuntu-latest

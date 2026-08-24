@@ -4,6 +4,7 @@ import { recordPlaidBalances } from './plaidBalances';
 import db from './db';
 import { createLogger } from './logger';
 import { matchReissuedTransactions } from './domain/txnMatch';
+import { listSyncableItems, recordItemSyncSuccess } from './plaidItems';
 // Reused rather than re-written: node-postgres hands back a DATE column as a JS Date at local
 // midnight, and toISOString() would shift it a day earlier at any UTC+ offset. That trap is
 // already solved (and tested) there; duplicating the logic here is how the two drift apart.
@@ -28,6 +29,7 @@ function applyRule(plaidCategory: string | null, rules: RuleMap): { mapped: stri
 
 // Incremental sync via cursor — only fetches changes since last sync.
 async function syncItem(
+  itemId: number,
   accessToken: string,
   accountIds: string[],
   cursor: string | null,
@@ -163,10 +165,8 @@ async function syncItem(
     hasMore = has_more;
   }
 
-  await db.query(
-    `UPDATE accounts SET cursor = $1, last_synced_at = NOW() WHERE id = ANY($2)`,
-    [currentCursor, accountIds]
-  );
+  // One row per Item, so there is no set of sibling rows to keep in step any more.
+  await recordItemSyncSuccess(itemId, currentCursor ?? null);
 
   if (unmatchedAccountIds.size > 0) {
     log.warn('transactions for unrecognized account_ids (not saved)', { accountIds: [...unmatchedAccountIds] });
@@ -212,16 +212,21 @@ async function runSyncInner({
 }): Promise<SyncResult> {
   const rules = await loadRules();
 
+  // One query, one row per connection — where this used to be SELECT DISTINCT access_token
+  // over every account row, then a second query to rebuild the same grouping by hand.
+  const items = await listSyncableItems(filterAccountId);
+
+  if (filterAccountId && items.length === 0) {
+    throw new Error('Account not found or has no access token');
+  }
+
   // Self-heal account_id drift before touching transactions: Plaid can reissue an
   // account's id for the same item without any user action. Reconciling first means
   // the sync below always compares against current ids.
-  const { rows: tokenRows } = await db.query<{ access_token: string }>(
-    'SELECT DISTINCT access_token FROM accounts WHERE access_token IS NOT NULL'
-  );
   const reconciled: string[] = [];
-  for (const { access_token } of tokenRows) {
+  for (const item of items) {
     try {
-      const result = await reconcileAccountIds(access_token);
+      const result = await reconcileAccountIds(item.id, item.accessToken);
       for (const r of result.remapped) reconciled.push(`remapped ${r.name} (${r.matchedBy})`);
       for (const u of result.unmatchedLive) reconciled.push(`new/unmatched account at Plaid: ${u.name}`);
 
@@ -233,39 +238,20 @@ async function runSyncInner({
         log.error('recording plaid balances failed', { error: err instanceof Error ? err.message : String(err) });
       }
     } catch (err) {
-      log.error('reconcile failed for token', { error: err instanceof Error ? err.message : String(err) });
+      // itemId, never the token — this is a credential and the log is not the place for it.
+      log.error('reconcile failed for item', { itemId: item.id, error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  const accounts = await db.query<{ id: string; access_token: string; cursor: string | null }>(
-    'SELECT id, access_token, cursor FROM accounts WHERE access_token IS NOT NULL'
-  );
-
-  if (accounts.rows.length === 0) {
+  if (items.length === 0) {
     return { synced: 0, errors: [], reconciled, unmatchedAccountIds: [] };
-  }
-
-  // Group by access token — one Plaid item = one API call.
-  const byToken = new Map<string, { ids: string[]; cursor: string | null }>();
-  for (const a of accounts.rows) {
-    if (!byToken.has(a.access_token)) byToken.set(a.access_token, { ids: [], cursor: a.cursor });
-    byToken.get(a.access_token)!.ids.push(a.id);
-  }
-
-  // If a specific account is requested, only sync the item that contains it.
-  let entries = [...byToken.entries()];
-  if (filterAccountId) {
-    entries = entries.filter(([, { ids }]) => ids.includes(filterAccountId));
-    if (entries.length === 0) {
-      throw new Error('Account not found or has no access token');
-    }
   }
 
   // Force-refresh: ask Plaid to re-pull from the institution, then wait for it to process.
   if (force) {
     await Promise.allSettled(
-      entries.map(([token]) =>
-        plaidClient.transactionsRefresh({ access_token: token }).catch((e) => {
+      items.map((item) =>
+        plaidClient.transactionsRefresh({ access_token: item.accessToken }).catch((e) => {
           log.warn('refresh warning', { error: e?.message });
         })
       )
@@ -277,18 +263,18 @@ async function runSyncInner({
   let totalSynced = 0;
   const errors: string[] = [];
   const unmatchedAccountIds: string[] = [];
-  for (const [token, { ids, cursor }] of entries) {
+  for (const item of items) {
     try {
-      const result = await syncItem(token, ids, cursor, rules);
+      const result = await syncItem(item.id, item.accessToken, item.accountIds, item.cursor, rules);
       totalSynced += result.added;
       unmatchedAccountIds.push(...result.unmatchedAccountIds);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      log.error('item failed', { accountIds: ids, error: msg });
+      log.error('item failed', { itemId: item.id, accountIds: item.accountIds, error: msg });
       // Generic, not `msg` — this array reaches the client via the API response. Raw
       // Postgres/Plaid error text can carry internal schema or request details; the full
       // message is already logged server-side above for debugging.
-      errors.push(`Sync failed for account(s): ${ids.join(', ')}`);
+      errors.push(`Sync failed for account(s): ${item.accountIds.join(', ')}`);
     }
   }
 

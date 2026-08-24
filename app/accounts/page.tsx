@@ -14,7 +14,7 @@ import type { Account } from '@/shared/types';
 async function getAccounts(): Promise<Account[]> {
   const result = await db.query<Account>(
     `SELECT id, name, type, subtype, landscape, track_transactions, bank,
-            (access_token IS NULL) AS is_manual,
+            (plaid_item_id IS NULL) AS is_manual,
             last_synced_at, valuation_mode, is_liability
      FROM accounts ORDER BY landscape, sort_order, created_at`
   );

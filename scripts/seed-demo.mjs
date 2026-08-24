@@ -100,8 +100,9 @@ for (const [pid, rows] of Object.entries(valueSeries)) {
 }
 
 // ---------------------------------------------------------------- accounts
-// access_token is a fake placeholder so the Sync Health card renders; grouped per "bank" the way
-// a real Plaid Item would be. Nothing here is a credential.
+// `token` is a fake placeholder standing in for a Plaid Item, one per "bank", the way a real
+// connection groups accounts. Nothing here is a credential. Each distinct value becomes a
+// plaid_items row below and the accounts reference it by id.
 const A = (o) => ({ landscape: 'operational', valuation_mode: 'ledger', is_liability: false, property_id: null, track_transactions: true, mask: null, ...o });
 
 const accounts = [
@@ -298,7 +299,8 @@ async function main() {
 
   await db.query(`TRUNCATE transactions, transfer_groups, account_valuations, property_valuations,
                            account_balances, category_balances, net_worth_snapshots, sync_log,
-                           budget_categories, category_rules, accounts, properties, budget_settings
+                           budget_categories, category_rules, accounts, plaid_items, properties,
+                           budget_settings
                   RESTART IDENTITY CASCADE`);
 
   for (const p of properties) {
@@ -317,14 +319,27 @@ async function main() {
     );
   }
 
+  // One Item per distinct placeholder token. last_synced_at is recent so the Sync Health card
+  // renders every connection green rather than alarming on a freshly seeded demo.
+  const itemIdByToken = new Map();
+  for (const token of [...new Set(accounts.map((a) => a.token))]) {
+    const bank = accounts.find((a) => a.token === token).bank;
+    const res = await db.query(
+      `INSERT INTO plaid_items (item_id, access_token, bank, last_synced_at)
+       VALUES ($1, $2, $3, NOW() - INTERVAL '4 hours') RETURNING id`,
+      [`${token}-item`, token, bank]
+    );
+    itemIdByToken.set(token, res.rows[0].id);
+  }
+
   for (const a of accounts) {
     await db.query(
-      `INSERT INTO accounts (id, name, type, subtype, access_token, last_synced_at, landscape,
-                             track_transactions, bank, mask, sort_order, valuation_mode,
+      `INSERT INTO accounts (id, name, type, subtype, access_token, plaid_item_id, last_synced_at,
+                             landscape, track_transactions, bank, mask, sort_order, valuation_mode,
                              is_liability, property_id)
-       VALUES ($1,$2,$3,$4,$5, NOW() - INTERVAL '4 hours', $6,$7,$8,$9,$10,$11,$12,$13)`,
-      [a.id, a.name, a.type, a.subtype, a.token, a.landscape, a.track_transactions,
-       a.bank, a.mask, a.sort, a.valuation_mode, a.is_liability, a.property_id]
+       VALUES ($1,$2,$3,$4,$5,$6, NOW() - INTERVAL '4 hours', $7,$8,$9,$10,$11,$12,$13,$14)`,
+      [a.id, a.name, a.type, a.subtype, a.token, itemIdByToken.get(a.token), a.landscape,
+       a.track_transactions, a.bank, a.mask, a.sort, a.valuation_mode, a.is_liability, a.property_id]
     );
   }
 

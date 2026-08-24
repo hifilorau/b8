@@ -4,6 +4,23 @@
 -- postgresql@16 it has to be built from source against that version's pg_config.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- One Plaid Item = one institution login. It owns the access_token and the transactionsSync
+-- cursor, because that is the grain they actually have: a cursor is scoped to the Item that
+-- issued it, and re-auth applies to the Item, not to an account. Before this table they were
+-- copied onto every account row and the Item was reconstructed by GROUP BY access_token --
+-- which let sibling cursors diverge (see migrations/1787572606405_plaid-items.sql) and made
+-- the token a join key, so it could not be encrypted.
+CREATE TABLE IF NOT EXISTS plaid_items (
+  id             SERIAL PRIMARY KEY,
+  item_id        TEXT UNIQUE,       -- Plaid's own item_id; NULL for connections linked before it was stored
+  access_token   TEXT,              -- NULL once an Item has no linked accounts
+  cursor         TEXT,
+  institution_id TEXT,
+  bank           TEXT,
+  last_synced_at TIMESTAMPTZ,       -- advances ONLY on success; the basis of staleness detection
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Plaid-linked accounts
 CREATE TABLE IF NOT EXISTS accounts (
   id                     TEXT PRIMARY KEY,  -- Plaid account_id (NOT guaranteed permanently stable — see lib/plaidReconcile.ts)
@@ -13,8 +30,8 @@ CREATE TABLE IF NOT EXISTS accounts (
   mask                   TEXT,              -- last 4 digits, used to re-match accounts if Plaid reissues account_id
   persistent_account_id  TEXT,              -- Plaid's stable identifier, preferred over account_id for reconciliation
   landscape              TEXT NOT NULL DEFAULT 'operational' CHECK (landscape IN ('operational', 'capital')),
-  access_token    TEXT,              -- NULL for manually-created accounts
-  cursor              TEXT,              -- Plaid sync cursor for incremental updates
+  access_token    TEXT,              -- LEGACY, dropped in a follow-up migration: the token now lives on plaid_items
+  cursor              TEXT,              -- LEGACY, dropped in a follow-up migration: the cursor now lives on plaid_items
   last_synced_at      TIMESTAMPTZ,
   track_transactions  BOOLEAN NOT NULL DEFAULT TRUE,
   bank                TEXT,
@@ -23,6 +40,12 @@ CREATE TABLE IF NOT EXISTS accounts (
   is_liability        BOOLEAN NOT NULL DEFAULT FALSE,  -- valuation-mode accounts only (see lib/domain/valuation.ts) — subtracted rather than added
   created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- ON DELETE SET NULL, never CASCADE: an account carries transaction history, manual valuations
+-- and hand-assigned categories that exist nowhere else, so unlinking a connection must not
+-- delete them. A null plaid_item_id is what the app already reads as "manual".
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS plaid_item_id INT REFERENCES plaid_items(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS idx_accounts_plaid_item_id ON accounts(plaid_item_id);
 
 -- Editable starting balance per account per year; combined with that year's
 -- transactions to compute the running/ending balance shown on the account statement.

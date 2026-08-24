@@ -38,18 +38,22 @@ async function getSyncActivity(): Promise<{ data: SyncHealthData[]; totalRuns: n
 }
 
 // One row per Plaid Item (one bank login), because that is the unit that fails and the unit
-// re-auth applies to. Grouped by access_token, but the token itself never leaves this function
-// — it is the credential. The key sent onward is a representative account id, which is already
-// public (it appears in /accounts/[id] URLs).
+// re-auth applies to. It is now literally one row per Item: this used to GROUP BY access_token
+// to reconstruct the connection, taking MAX(last_synced_at) across siblings to guess when it
+// last succeeded. The Item records its own success timestamp, so that guess is gone.
+//
+// The key sent onward is still a representative account id rather than the Item's id, because
+// that is what /accounts/[id] URLs use. The token is not selected here at all any more.
 async function getItems(): Promise<SyncItemInput[]> {
   const result = await db.query<{ key: string; bank: string | null; account_count: string; last_synced_at: Date | null }>(`
-    SELECT MIN(id)               AS key,
-           MIN(bank)             AS bank,
-           COUNT(*)::text        AS account_count,
-           MAX(last_synced_at)   AS last_synced_at
-      FROM accounts
-     WHERE access_token IS NOT NULL
-     GROUP BY access_token
+    SELECT COALESCE(MIN(a.id), 'item-' || i.id) AS key,
+           COALESCE(MIN(a.bank), i.bank)        AS bank,
+           COUNT(a.id)::text                    AS account_count,
+           i.last_synced_at                     AS last_synced_at
+      FROM plaid_items i
+      LEFT JOIN accounts a ON a.plaid_item_id = i.id
+     WHERE i.access_token IS NOT NULL
+     GROUP BY i.id, i.bank, i.last_synced_at
   `);
   return result.rows.map((r) => ({
     key: r.key,
