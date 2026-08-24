@@ -54,7 +54,7 @@ This is a single-user, self-hosted app — it expects to be run for one person's
 
 1. `npm install`
 2. Create a Postgres database (with the `pgvector` extension available — see `db/schema.sql`'s note on building it from source against Postgres 16 on Homebrew)
-3. Copy `.env.local.example` to `.env.local` and fill in your own Plaid, database, and Anthropic API credentials
+3. Copy `env.example` to `.env.local` and fill in your own Plaid, database, and Anthropic API credentials
 4. `npm run migrate:up` — applies `migrations/` via `node-pg-migrate`, reading `DATABASE_URL` from the environment (`db/schema.sql` is kept as a human-readable reference of the same schema; the migrations are the source of truth)
 5. `npm run dev`
 
@@ -64,7 +64,7 @@ The dev/start scripts bind to `127.0.0.1` only.
 
 An alternative to the steps above — app + Postgres (with `pgvector`) in containers, no local Postgres install needed:
 
-1. Copy `.env.local.example` to `.env.local`, fill in your credentials, and also set `POSTGRES_PASSWORD` (used only by the `db` container)
+1. Copy `env.example` to `.env.local`, fill in your credentials, and also set `POSTGRES_PASSWORD` (used only by the `db` container)
 2. `npm run docker:up` — builds the app image, starts Postgres, runs migrations, then starts the app on `127.0.0.1:3000`
 3. `npm run docker:down` to stop
 

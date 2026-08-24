@@ -94,6 +94,99 @@ describe('computeNetWorthBreakdown', () => {
     expect(r.total).toBe(6800 + 400000 + 140000 - 25000);
   });
 
+  // The "components sum to total" test above proves the arithmetic balances. These prove the
+  // stronger property it rests on: that no entity is counted in two places. Both can't be
+  // caught by totals alone — a mortgage double-counted in `liabilities` and omitted from
+  // equity would still sum to *a* total, just the wrong one. These are the guard rail for
+  // the real-estate work, which adds new ways for an account to reach the equity component.
+  it('gives every account and property exactly one contribution line', () => {
+    const r = computeNetWorthBreakdown(
+      [
+        acct('chk', 'operational', 'ledger'),
+        acct('401k', 'capital', 'valuation'),
+        acct('mtg', 'capital', 'valuation', true, 1),
+        acct('loan', 'capital', 'valuation', true, null),
+      ],
+      new Map([['chk', 8000]]),
+      new Map([['401k', 400000], ['mtg', 310000], ['loan', 25000]]),
+      new Map([[1, 450000]]),
+      [1]
+    );
+
+    const keys = r.contributions.map((c) => `${c.kind}:${c.id}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys.sort()).toEqual(
+      ['account:401k', 'account:chk', 'account:loan', 'account:mtg', 'property:1'].sort()
+    );
+  });
+
+  it('never lets one account land in two different components', () => {
+    const r = computeNetWorthBreakdown(
+      [acct('mtg', 'capital', 'valuation', true, 1), acct('loan', 'capital', 'valuation', true, null)],
+      new Map(),
+      new Map([['mtg', 310000], ['loan', 25000]]),
+      new Map([[1, 450000]]),
+      [1]
+    );
+
+    const componentsById = new Map<string, Set<string>>();
+    for (const c of r.contributions) {
+      const key = `${c.kind}:${c.id}`;
+      if (!componentsById.has(key)) componentsById.set(key, new Set());
+      componentsById.get(key)!.add(c.component);
+    }
+    // Reported as entity -> components so a failure names which one straddled two totals,
+    // rather than just "expected 2 to be 1".
+    const straddling = [...componentsById]
+      .filter(([, components]) => components.size > 1)
+      .map(([key, components]) => `${key} -> ${[...components].join(', ')}`);
+    expect(straddling).toEqual([]);
+    // The property-linked mortgage is in equity; the unlinked one is in liabilities.
+    expect(componentsById.get('account:mtg')).toEqual(new Set(['realEstateEquity']));
+    expect(componentsById.get('account:loan')).toEqual(new Set(['liabilities']));
+  });
+
+  it('nets a second property-linked liability (a HELOC) into the same property', () => {
+    // Nothing stops a property from having two liens against it, and the equity rule has to
+    // hold for both: a HELOC belongs inside its property's equity exactly like the first
+    // mortgage, never as a standalone liability. Untested until now, and the RE work is
+    // about to lean on it.
+    const r = computeNetWorthBreakdown(
+      [
+        acct('mtg', 'capital', 'valuation', true, 1),
+        acct('heloc', 'capital', 'valuation', true, 1),
+      ],
+      new Map(),
+      new Map([['mtg', 310000], ['heloc', 40000]]),
+      new Map([[1, 450000]]),
+      [1]
+    );
+    expect(r.realEstateEquity).toBe(100000);
+    expect(r.liabilities).toBe(0);
+    expect(r.total).toBe(100000);
+    expect(groupRealEstateEquity(r.contributions)).toEqual([{ propertyId: 1, value: 100000 }]);
+  });
+
+  it('drops a HELOC along with its property when that property has no valuation', () => {
+    // The existing rule for a single mortgage — drop the pair rather than leave a naked debt
+    // — has to cover every lien on that property, or an unvalued property leaks one of them
+    // into `liabilities` and net worth silently goes negative by that amount.
+    const r = computeNetWorthBreakdown(
+      [
+        acct('mtg', 'capital', 'valuation', true, 1),
+        acct('heloc', 'capital', 'valuation', true, 1),
+      ],
+      new Map(),
+      new Map([['mtg', 310000], ['heloc', 40000]]),
+      new Map(),
+      [1]
+    );
+    expect(r.total).toBe(0);
+    expect(r.liabilities).toBe(0);
+    expect(r.unvaluedPropertyIds).toEqual([1]);
+    expect(r.contributions).toEqual([]);
+  });
+
   it('is zero across the board with no accounts and no properties', () => {
     const r = computeNetWorthBreakdown([], new Map(), new Map(), new Map(), []);
     expect(r).toMatchObject({ operational: 0, capitalFinancial: 0, realEstateEquity: 0, liabilities: 0, total: 0 });

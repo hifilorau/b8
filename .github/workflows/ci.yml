@@ -16,7 +16,31 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
-      - run: npx tsc --noEmit
+      - run: npm run typecheck
+
+  # Separate from `typecheck` on purpose: `tsc --noEmit` does NOT check App Router route and
+  # page prop types, which are generated into .next/types and only exist after a build. With
+  # 25 route handlers and 13 server components, that is a real gap — and a build also catches
+  # a data-fetching page that forgot `export const dynamic = 'force-dynamic'`, which would
+  # otherwise be prerendered at build time and served as permanently stale HTML.
+  #
+  # Needs DATABASE_URL/PLAID_* set because lib/db.ts and lib/plaid.ts throw at import, and a
+  # build imports every route module. They are placeholders, not a real database: no page is
+  # prerendered any more, so nothing connects.
+  build:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://placeholder:placeholder@127.0.0.1:5432/placeholder
+      PLAID_CLIENT_ID: placeholder
+      PLAID_SECRET: placeholder
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
 
   lint:
     runs-on: ubuntu-latest
@@ -67,9 +91,21 @@ jobs:
       - run: npm ci
       # Verifies both directions apply cleanly against a throwaway DB — a migration that
       # can't be written down is a debugging trap the first time a deploy needs a rollback.
+      #
+      # The round trip below runs over SEEDED data, not an empty database. Applying and
+      # reverting empty DDL only proves the SQL parses; it says nothing about whether rows
+      # survive, and a down migration that rebuilds a table or re-adds a column as NULL
+      # passes an empty round trip green while destroying real data on a real rollback.
+      # See scripts/db-snapshot.mjs.
       - run: npm run migrate:up
+      - run: npm run seed:demo -- --yes-wipe-my-database
+      - run: node scripts/db-snapshot.mjs write /tmp/before.json
       - run: npm run migrate:down
+      # Taken while rolled back, to tell "a table this migration created" (correctly empty
+      # after the re-up) apart from "a table that lost its rows".
+      - run: node scripts/db-snapshot.mjs write /tmp/rolled-back.json
       - run: npm run migrate:up
+      - run: node scripts/db-snapshot.mjs compare /tmp/before.json /tmp/rolled-back.json
 
   gitleaks:
     runs-on: ubuntu-latest

@@ -1,3 +1,8 @@
+// Queries Postgres below, so it must never be prerendered: a static build would freeze
+// balances and sync health at build time and serve them forever. Every other data-fetching
+// page already declares this.
+export const dynamic = 'force-dynamic';
+
 import db from '@/lib/db';
 import PlaidLinkButton from '@/components/PlaidLinkButton';
 import AddAccountForm from '@/components/AddAccountForm';

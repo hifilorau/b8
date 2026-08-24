@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS transactions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(date);
+-- Serves lib/sync.ts's per-page re-identification lookup (account_id = ANY(...) AND date
+-- BETWEEN ...). account_id leads because it is the equality test; date is the range.
+CREATE INDEX IF NOT EXISTS idx_transactions_account_id_date ON transactions(account_id, date);
 CREATE INDEX IF NOT EXISTS idx_transactions_mapped_category ON transactions(mapped_category);
 CREATE INDEX IF NOT EXISTS idx_transactions_transfer_group ON transactions(transfer_group_id);
 

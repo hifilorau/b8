@@ -1,3 +1,7 @@
+// See app/accounts/page.tsx — queries Postgres, so it must not be statically prerendered.
+// A frozen account list here means a newly linked account never appears in the importer.
+export const dynamic = 'force-dynamic';
+
 import db from '@/lib/db';
 import CsvImporter from '@/components/CsvImporter';
 

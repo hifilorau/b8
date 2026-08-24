@@ -1,3 +1,6 @@
+// See app/accounts/page.tsx — queries Postgres, so it must not be statically prerendered.
+export const dynamic = 'force-dynamic';
+
 import db from '@/lib/db';
 import type { BudgetCategory } from '@/shared/types';
 import RulesManager, { type RuleRow } from '@/components/RulesManager';
