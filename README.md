@@ -71,6 +71,19 @@ An alternative to the steps above — app + Postgres (with `pgvector`) in contai
 
 Ports are published to `127.0.0.1` only, matching the dev/start scripts' own localhost-only binding.
 
+## Backups
+
+`scripts/backup.sh` writes an encrypted `pg_dump`; `scripts/restore.sh` restores one; and
+`scripts/verify-restore.mjs` checks a restore against the source by row count, recomputed net
+worth, and checksums over every value column. See [docs/OPERATIONS.md](docs/OPERATIONS.md),
+which also carries the release gate to work through before pointing this at production Plaid
+credentials.
+
+Worth knowing why this matters more than it looks: transactions can be re-pulled from Plaid,
+but manual valuations, hand-assigned categories, property cost basis and the whole
+`net_worth_snapshots` series exist nowhere else. Snapshots especially — each records what net
+worth *was* under that day's account classifications, and cannot be recomputed later.
+
 ## Note on data
 
 This repo contains only application code and schema — no real account data, transactions, or credentials. All of that lives in a local Postgres database and a gitignored `.env.local`, neither of which is part of this repository.
