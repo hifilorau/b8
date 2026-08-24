@@ -24,7 +24,7 @@ Built as a hobby project to get hands-on with a production-grade Plaid integrati
 - **Dual-regime balances** — every account is either *ledger* (beginning balance + Σ transactions) or *valuation* (the latest recorded figure). A brokerage has no meaningful transaction ledger; a checking account has no meaningful "valuation". Getting this wrong is why an investment account can sit contributing $0 to net worth indefinitely, so newly linked accounts are prompted for their mode at link time
 - **Reconciliation** — the ledger balance is compared against what the bank reports, and accounts that disagree are surfaced. Accounts that were never given an opening balance can be reconciled in one click; accounts that *had* one and have since diverged deliberately are not, because there the gap is evidence of a missing or duplicated transaction and moving the opening figure would bury it
 - **Real estate** — per-property valuation history, equity charted as the gap between market value and the mortgage balance *as of that date*, and a per-property P&L separating operating expenses from debt service
-- **Bank sync** — Plaid Link to connect accounts, incremental sync via `transactionsSync` with a cursor, pending-transaction handling to avoid duplicate postings, a daily scheduled sync, and per-connection staleness reporting (the unit that actually fails and that re-auth applies to is the Plaid Item, not the account)
+- **Bank sync** — Plaid Link to connect accounts, with each institution connection (Plaid Item) modelled as its own row owning the access token and sync cursor; tokens are encrypted at rest so a database dump alone can't reach your banks. Incremental sync via `transactionsSync` with a cursor, pending-transaction handling to avoid duplicate postings, a daily scheduled sync, and per-connection staleness reporting (the unit that actually fails and that re-auth applies to is the Plaid Item, not the account)
 - **Budgets** — per-category annual budgets with an optional month-by-month allocation schedule (for categories that aren't evenly spread across the year), status thresholds, and a monthly grid view
 - **Transactions** — search/filter by amount range, account, and category; auto-categorization rules mapping Plaid categories to budget categories; manual duplication/editing for corrections; CSV import for accounts Plaid can't reach
 - **Accounts** — drag-and-drop ordering, editable type/balance, relinking after a Plaid reconnect (accounts are matched back to their transaction history by `persistent_account_id`/mask rather than treated as new, and re-issued transaction IDs are matched back to the rows they replace rather than inserted as duplicates)
@@ -55,8 +55,9 @@ This is a single-user, self-hosted app — it expects to be run for one person's
 1. `npm install`
 2. Create a Postgres database (with the `pgvector` extension available — see `db/schema.sql`'s note on building it from source against Postgres 16 on Homebrew)
 3. Copy `env.example` to `.env.local` and fill in your own Plaid, database, and Anthropic API credentials
-4. `npm run migrate:up` — applies `migrations/` via `node-pg-migrate`, reading `DATABASE_URL` from the environment (`db/schema.sql` is kept as a human-readable reference of the same schema; the migrations are the source of truth)
-5. `npm run dev`
+4. Set `TOKEN_ENCRYPTION_KEY` in `.env.local` (`openssl rand -base64 32`). Plaid access tokens are encrypted at rest with it, so a database dump or a stolen backup alone yields nothing usable. Keep it out of the database and out of database backups — storing both together defeats the point. Losing it means re-linking every institution through Plaid Link; transaction history survives, the connections do not
+5. `npm run migrate:up` — applies `migrations/` via `node-pg-migrate`, reading `DATABASE_URL` from the environment (`db/schema.sql` is kept as a human-readable reference of the same schema; the migrations are the source of truth)
+6. `npm run dev`
 
 The dev/start scripts bind to `127.0.0.1` only.
 

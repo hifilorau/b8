@@ -3,14 +3,27 @@
 //
 // This module is deliberately the ONLY place `plaid_items.access_token` is selected. Every
 // caller works in terms of an item id and receives the token as a field it passes straight to
-// the Plaid SDK; nothing joins, groups or compares by its value any more. That is what makes
-// encrypting the column a change confined to this file — decrypt on read here, and the seven
-// call sites that used to key off the token are already none the wiser.
+// the Plaid SDK; nothing joins, groups or compares by its value any more. That is what made
+// encrypting the column a change confined to this file: it is encrypted on write and decrypted
+// on read here, and the call sites that used to key off the token never noticed.
+//
+// The column holds ciphertext (lib/crypto.ts) but is still plain TEXT, and reads tolerate a
+// value that has not been encrypted yet. That is what lets scripts/encrypt-plaid-tokens.mjs
+// run against a live database instead of needing the app stopped.
 
 import db from './db';
 import { createLogger } from './logger';
+import { encryptSecret, decryptSecret, isEncrypted } from './crypto';
 
 const log = createLogger('plaidItems');
+
+/**
+ * Accepts a not-yet-encrypted value so the backfill can run while the app is serving. Once
+ * scripts/encrypt-plaid-tokens.mjs has been run, every row takes the first branch.
+ */
+function readToken(stored: string): string {
+  return isEncrypted(stored) ? decryptSecret(stored) : stored;
+}
 
 export interface SyncableItem {
   id: number;
@@ -54,7 +67,7 @@ export async function listSyncableItems(filterAccountId?: string | null): Promis
 
   return rows.map((r) => ({
     id: r.id,
-    accessToken: r.access_token,
+    accessToken: readToken(r.access_token),
     cursor: r.cursor,
     accountIds: r.account_ids,
   }));
@@ -102,6 +115,7 @@ export async function upsertItem(params: {
   bank: string | null;
 }): Promise<number> {
   const { itemId, accessToken, institutionId, bank } = params;
+  const stored = encryptSecret(accessToken);
 
   if (itemId) {
     const { rows } = await db.query<{ id: number }>(
@@ -114,16 +128,33 @@ export async function upsertItem(params: {
              cursor = CASE WHEN plaid_items.access_token IS DISTINCT FROM EXCLUDED.access_token
                            THEN NULL ELSE plaid_items.cursor END
        RETURNING id`,
-      [itemId, accessToken, institutionId, bank]
+      [itemId, stored, institutionId, bank]
     );
     return rows[0].id;
   }
 
-  // No item_id from Plaid — fall back to the token, which is all the pre-migration rows had.
-  const existing = await db.query<{ id: number }>(
-    'SELECT id FROM plaid_items WHERE access_token = $1 LIMIT 1',
-    [accessToken]
+  // No item_id from Plaid — fall back to matching on the token, which is all the rows
+  // backfilled from the old schema had.
+  //
+  // Compared after decrypting, one row at a time, rather than with `WHERE access_token = $1`:
+  // a fresh IV per encryption means the same token stores as a different string every time, so
+  // an equality test would never match and this would silently create a duplicate Item on every
+  // reconnect. Scanning is fine here — only pre-migration rows lack an item_id, the set shrinks
+  // to nothing as they are re-linked, and this runs once per link, not per sync.
+  const candidates = await db.query<{ id: number; access_token: string }>(
+    'SELECT id, access_token FROM plaid_items WHERE item_id IS NULL AND access_token IS NOT NULL'
   );
+  const match = candidates.rows.find((row) => {
+    try {
+      return readToken(row.access_token) === accessToken;
+    } catch {
+      // A row that cannot be decrypted (wrong key, corrupted) must not abort a link attempt.
+      log.warn('could not read a stored token while matching items', { itemId: row.id });
+      return false;
+    }
+  });
+
+  const existing = { rows: match ? [{ id: match.id }] : [] };
   if (existing.rows.length > 0) {
     await db.query(
       `UPDATE plaid_items
@@ -138,7 +169,7 @@ export async function upsertItem(params: {
   const { rows } = await db.query<{ id: number }>(
     `INSERT INTO plaid_items (item_id, access_token, institution_id, bank)
      VALUES (NULL, $1, $2, $3) RETURNING id`,
-    [accessToken, institutionId, bank]
+    [stored, institutionId, bank]
   );
   log.info('created plaid item without a provider item_id', { itemId: rows[0].id });
   return rows[0].id;
