@@ -37,7 +37,9 @@ function NavItem({ href, label, icon: Icon, pathname }: { href: string; label: s
   );
 }
 
-export default function Sidebar() {
+/** `footer` is rendered by the server (see app/layout.tsx) — this component is client-side for
+ *  usePathname, and the signed-in identity must not be fetched from here. */
+export default function Sidebar({ footer }: { footer?: React.ReactNode }) {
   const pathname = usePathname();
 
   return (
@@ -61,6 +63,8 @@ export default function Sidebar() {
         </p>
         <NavItem href="/insights" label="Insights" icon={Sparkles} pathname={pathname} />
       </div>
+
+      {footer}
     </aside>
   );
 }

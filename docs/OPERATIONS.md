@@ -94,9 +94,10 @@ tokens looks perfect by row count and leaves you re-linking every bank by hand.
 - [x] A repeated sync does not duplicate transactions (`plaid_transaction_id` upsert plus
       re-identification of reissued ids — `lib/domain/txnMatch.ts`).
 - [x] Reconnect preserves history (`lib/plaidMatch.ts`, five-pass account matching).
-- [ ] **Application authentication.** Still outstanding: there is no login. This is fine while
-      the app is bound to `127.0.0.1`, and is the thing to build before `ALLOWED_HOSTS` ever
-      names a public hostname. See the build plan's Phase 1.
+- [x] **Application authentication.** Cloudflare Access assertions are verified at the origin,
+      with issuer and audience pinned; a verified identity must additionally have a row in
+      `users`. `ALLOWED_HOSTS` naming a public host without Access configured is a startup
+      error, so the app cannot be exposed without a login by forgetting a variable.
 - [ ] Off-machine copy of the backups. `scripts/backup.sh` writes locally; copying archives to
       a second machine or object store is not automated yet, and a backup on the same disk as
       the database does not survive the failure it exists for.

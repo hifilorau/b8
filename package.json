@@ -13,6 +13,7 @@
     "migrate:up": "node-pg-migrate up --envPath .env.local",
     "seed:demo": "node scripts/seed-demo.mjs",
     "encrypt:tokens": "node scripts/encrypt-plaid-tokens.mjs",
+    "add-user": "node scripts/add-user.mjs",
     "migrate:down": "node-pg-migrate down --envPath .env.local",
     "migrate:create": "node-pg-migrate create -j sql",
     "docker:up": "docker compose --env-file .env.local up --build",
@@ -22,6 +23,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.107.0",
     "@types/pg": "^8.20.0",
+    "jose": "^6.2.10",
     "lucide-react": "^1.22.0",
     "next": "^16.2.12",
     "pg": "^8.22.0",

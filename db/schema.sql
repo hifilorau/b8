@@ -4,6 +4,20 @@
 -- postgresql@16 it has to be built from source against that version's pg_config.
 CREATE EXTENSION IF NOT EXISTS vector;
 
+-- Who may use this app, as distinct from who Cloudflare Access will let through. Access
+-- decides whether a person reaches the origin; this decides whether they see the household's
+-- finances. Keeping them separate makes revocation local and immediate, and contains a
+-- mis-scoped Access policy. No password column, and there will not be one — Access is the
+-- identity provider.
+CREATE TABLE IF NOT EXISTS users (
+  id            SERIAL PRIMARY KEY,
+  email         TEXT NOT NULL UNIQUE,   -- lowercased on write; Postgres comparison is case-sensitive
+  display_name  TEXT,
+  role          TEXT NOT NULL DEFAULT 'owner' CHECK (role IN ('owner', 'member')),
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at  TIMESTAMPTZ
+);
+
 -- One Plaid Item = one institution login. It owns the access_token and the transactionsSync
 -- cursor, because that is the grain they actually have: a cursor is scoped to the Item that
 -- issued it, and re-auth applies to the Item, not to an account. Before this table they were

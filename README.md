@@ -71,6 +71,24 @@ An alternative to the steps above — app + Postgres (with `pgvector`) in contai
 
 Ports are published to `127.0.0.1` only, matching the dev/start scripts' own localhost-only binding.
 
+## Authentication
+
+Locally there is none, and that is safe by construction rather than by trust: the app serves
+only loopback unless `ALLOWED_HOSTS` names another hostname, and doing that without
+configuring Cloudflare Access is a startup error. Exposure and identity are one decision.
+
+Behind a tunnel, every request must carry a Cloudflare Access assertion that verifies against
+the team's published keys with the issuer and audience pinned — the audience being what stops
+a token issued for another app behind the same Cloudflare account working here. Verification
+happens at the origin, not just at Cloudflare's edge, so a routing mistake or anything that
+reaches the container directly is refused rather than trusted.
+
+Passing Access is necessary but not sufficient: the identity must also have a row in `users`.
+That keeps revocation local and immediate — deleting a row locks someone out on their next
+request, with no Cloudflare policy change — and contains a mis-scoped Access policy. The first
+user is created from `BOOTSTRAP_ADMIN_EMAIL`; add others with
+`npm run add-user -- them@example.com "Their Name"`.
+
 ## Backups
 
 `scripts/backup.sh` writes an encrypted `pg_dump`; `scripts/restore.sh` restores one; and

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { Geist, Geist_Mono } from 'next/font/google';
 import Sidebar from '@/components/Sidebar';
+import SignedInAs from '@/components/SignedInAs';
 import './globals.css';
 
 const geistSans = Geist({ variable: '--font-geist-sans', subsets: ['latin'] });
@@ -15,7 +16,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="flex h-screen overflow-hidden bg-slate-50 text-slate-900">
-        <Sidebar />
+        <Sidebar footer={<SignedInAs />} />
         <div className="flex-1 overflow-auto">
           {children}
         </div>
